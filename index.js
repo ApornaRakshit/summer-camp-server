@@ -3,6 +3,7 @@ const app = express();
 const cors = require('cors');
 const jwt = require('jsonwebtoken');
 require('dotenv').config()
+const stripe = require('stripe')(process.env.PAYMENT_SECRET_KEY)
 const port = process.env.PORT || 5000;
 
 
@@ -17,15 +18,13 @@ const verifyJWT = (req, res, next) => {
     }
     const token = authorization.split(' ')[1]
 
-    jwt.verify(token, process.env.ACCESS_TOKEN_SECRET,(err, decoded)=>{
-        if(err){
+    jwt.verify(token, process.env.ACCESS_TOKEN_SECRET, (err, decoded) => {
+        if (err) {
             return res.status(401).send({ error: true, message: 'unauthorized access' })
         }
         req.decoded = decoded;
         next();
     })
-
-
 }
 
 
@@ -54,25 +53,24 @@ async function run() {
             const user = req.body;
             const token = jwt.sign(user, process.env.ACCESS_TOKEN_SECRET,
                 { expiresIn: '1h' })
-
-            res.send({ token })
+             res.send({ token })
         })
 
-const verifyAdmin = async(req,res,next)=>{
-    const email = req.decoded.email
-    const query = {email:email}
-    const user = await usersCollection.findOne(query)
-    if(user?.role !== 'admin'){
-        return res.status(403).send({error:true,message:'forbidden message'})
-    }
-    next();
-}
+        const verifyAdmin = async (req, res, next) => {
+            const email = req.decoded.email
+            const query = { email: email }
+            const user = await usersCollection.findOne(query)
+            if (user?.role !== 'admin') {
+                return res.status(403).send({ error: true, message: 'forbidden message' })
+            }
+            return next();
+        }
 
 
         //users related API
         app.get('/users', verifyJWT, verifyAdmin, async (req, res) => {
             const result = await usersCollection.find().toArray();
-            res.send(result)
+           return res.send(result)
         })
 
 
@@ -81,35 +79,53 @@ const verifyAdmin = async(req,res,next)=>{
             const query = { email: user.email }
             const existingUser = await usersCollection.findOne(query)
             if (existingUser) {
-                return res.send({ message: 'user already exists' })
+                 res.send({ message: 'user already exists' })
             }
-            const result = await usersCollection.insertOne(user);
+             const result = await usersCollection.insertOne(user);
             res.send(result);
         })
-
 
 
         // class related API
         app.get('/class', async (req, res) => {
             const result = await classCollection.find().toArray();
-            res.send(result);
+           res.send(result);
         });
 
 
+app.post('/class',verifyJWT, verifyAdmin, async(req,res)=>{
+    const newItem = req.body
+    const result = await classCollection.insertOne(newItem)
+    res.send(result)
+})
 
-        app.get('/users/admin/:email',verifyJWT, async(req,res)=>{
-            const email = req.params.email;
 
-            if(req.decoded.email!== email){
-                res.send({admin:false})
-            }
-            const query = {email:email}
-            const user = await usersCollection.findOne(query)
-            const result = {admin: user?.role === 'admin'}
+        app.get('/class', async(req,res)=>{
+            const newItem =  req.body;
+            const result = await classCollection.insertOne(newItem)
             res.send(result)
         })
 
 
+        app.delete('/class/:id', verifyJWT, verifyAdmin, async(req,res)=>{
+            const id =req.params.id
+            const query = {_id: new ObjectId(id)}
+            const result = await classCollection.deleteOne(query)
+            res.send(result)
+        })
+
+
+        app.get('/users/admin/:email', verifyJWT, async (req, res) => {
+            const email = req.params.email;
+
+            if (req.decoded.email !== email) {
+                res.send({ admin: false })
+            }
+            const query = { email: email }
+            const user = await usersCollection.findOne(query)
+            const result = { admin: user?.role === 'admin' }
+            res.send(result)
+        })
 
 
         app.patch('/users/admin/:id', async (req, res) => {
@@ -127,7 +143,7 @@ const verifyAdmin = async(req,res,next)=>{
 
 
         //cart collection
-        app.get('/carts',verifyJWT, async (req, res) => {
+        app.get('/carts', verifyJWT, async (req, res) => {
             const email = req.query.email;
             if (!email) {
                 res.send([]);
@@ -135,7 +151,7 @@ const verifyAdmin = async(req,res,next)=>{
 
 
             const decodedEmail = req.decoded.email;
-            if(email !==decodedEmail){
+            if (email !== decodedEmail) {
                 return res.status(403).send({ error: true, message: 'Forbidden access' })
             }
 
@@ -145,18 +161,36 @@ const verifyAdmin = async(req,res,next)=>{
             res.send(result);
         });
 
+
         app.post('/carts', async (req, res) => {
             const item = req.body;
             const result = await cartCollection.insertOne(item)
             res.send(result);
         })
 
+        
         app.delete('/carts/:id', async (req, res) => {
             const id = req.params.id;
             const query = { _id: new ObjectId(id) };
             const result = await cartCollection.deleteOne(query);
             res.send(result)
         })
+
+
+         // create payment intent
+    app.post('/create-payment-intent', verifyJWT, async (req, res) => {
+        const { price } = req.body;
+        const amount = parseInt(price * 100);
+        const paymentIntent = await stripe.paymentIntents.create({
+          amount: amount,
+          currency: 'usd',
+          payment_method_types: ['card']
+        });
+  
+        res.send({
+          clientSecret: paymentIntent.client_secret
+        })
+      })
 
         // Send a ping to confirm a successful connection
         await client.db("admin").command({ ping: 1 });
